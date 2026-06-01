@@ -575,11 +575,12 @@ async def mesaj_isle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if uid in banka_bekleyen:
         parsed = banka_bekleyen.pop(uid)
         parsed["banka"] = mesaj.strip()
-        bekleyen[uid] = parsed
-        banka_id, banka_ad = await banka_id_bul(mesaj.strip())
-        await update.message.reply_text(
-            f"Banka: {banka_ad or mesaj}\nKaydedeyim mi? (Evet/Hayir)"
-        )
+        await update.message.reply_text("Kaydediliyor...")
+        try:
+            sonuc = await islem_yap(parsed, update)
+            await update.message.reply_text(sonuc)
+        except Exception as e:
+            await update.message.reply_text(f"Hata: {str(e)}")
         return
 
     # Özet tarih aralığı bekleniyor

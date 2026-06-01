@@ -513,6 +513,8 @@ async def excel_export(update):
 bekleyen = {}
 sifirlama_bekleyen = set()
 ozet_bekleyen = {}
+vade_bekleyen = {}
+banka_bekleyen = {}
 
 async def sifirla_komutu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
@@ -549,6 +551,35 @@ async def mesaj_isle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             sifirlama_bekleyen.discard(uid)
             await update.message.reply_text("Iptal edildi.")
+        return
+
+    # Vade tarihi bekleniyor
+    if uid in vade_bekleyen:
+        parsed = vade_bekleyen.pop(uid)
+        if mesaj.lower() in ["vade yok", "atla", "gecebilir", "-"]:
+            parsed["vade_tarihi"] = None
+        else:
+            try:
+                analiz = await claude_analiz(f"Bu bir tarih: {mesaj}")
+                parsed["vade_tarihi"] = analiz.get("vade_tarihi") or analiz.get("tarih")
+            except:
+                parsed["vade_tarihi"] = None
+        bekleyen[uid] = parsed
+        vade_str = parsed.get("vade_tarihi") or "Belirtilmedi"
+        await update.message.reply_text(
+            f"{parsed.get('musteri','')} - {parsed.get('tutar',0):,.0f} TL fatura\nVade: {vade_str}\n\nKaydedeyim mi? (Evet/Hayir)"
+        )
+        return
+
+    # Banka bekleniyor
+    if uid in banka_bekleyen:
+        parsed = banka_bekleyen.pop(uid)
+        parsed["banka"] = mesaj.strip()
+        bekleyen[uid] = parsed
+        banka_id, banka_ad = await banka_id_bul(mesaj.strip())
+        await update.message.reply_text(
+            f"Banka: {banka_ad or mesaj}\nKaydedeyim mi? (Evet/Hayir)"
+        )
         return
 
     # Özet tarih aralığı bekleniyor
@@ -596,8 +627,7 @@ async def mesaj_isle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if islem == "fatura_kes" and not parsed.get("vade_tarihi"):
-        parsed["onay_mesaji_vade"] = True
-        bekleyen[uid] = parsed
+        vade_bekleyen[uid] = parsed
         await update.message.reply_text(
             f"{parsed.get('musteri','')} icin {parsed.get('tutar',0):,.0f} TL fatura kesilecek.\n\n"
             f"Vade tarihi nedir? (Ornek: 15 Temmuz veya 2026-07-15)\n"

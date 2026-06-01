@@ -247,6 +247,10 @@ async def mesaj_isle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     kullanici_id = update.effective_user.id
     mesaj = update.message.text.strip()
 
+    # Sıfırlama onayı mı?
+    if await sifirla_onay(update, context):
+        return
+
     # Onay cevabı mı?
     if kullanici_id in bekleyen:
         parsed = bekleyen.pop(kullanici_id)
@@ -289,9 +293,63 @@ async def mesaj_isle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
+    app.add_handler(CommandHandler("sifirla", sifirla_komutu))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, mesaj_isle))
     print("✅ Pena Finans Botu (Sohbet Modu) başlatıldı...")
     app.run_polling(stop_signals=None)
 
 if __name__ == "__main__":
     main()
+
+# Sıfırlama için bekleyen onay
+sifirlama_bekleyen = set()
+ADMIN_ID = 6230496507
+
+async def sifirla_komutu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        await update.message.reply_text("Bu komutu kullanma yetkin yok.")
+        return
+    sifirlama_bekleyen.add(update.effective_user.id)
+    await update.message.reply_text(
+        "Tüm veriler silinecek. Bu işlem geri alınamaz.\n\n"
+        "Devam etmek için: EVET SIFIRLA\n"
+        "İptal için: hayır"
+    )
+
+async def sifirla_onay(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    if uid not in sifirlama_bekleyen:
+        return False
+    
+    mesaj = update.message.text.strip().upper()
+    if mesaj == "EVET SIFIRLA":
+        sifirlama_bekleyen.discard(uid)
+        await update.message.reply_text("Siliniyor...")
+        try:
+            async with httpx.AsyncClient() as client:
+                headers = {
+                    "apikey": SUPABASE_KEY,
+                    "Authorization": f"Bearer {SUPABASE_KEY}",
+                    "Content-Type": "application/json"
+                }
+                tablolar = ["ic_hareketler", "hesap_hareketleri", "kesilen_faturalar", "gelen_faturalar", "borc_kredi"]
+                for tablo in tablolar:
+                    await client.delete(
+                        f"{SUPABASE_URL}/rest/v1/{tablo}?id=gte.0",
+                        headers=headers
+                    )
+                # Fatura sequence sıfırla
+                await client.post(
+                    f"{SUPABASE_URL}/rest/v1/rpc/sifirla_sequence",
+                    headers=headers,
+                    json={}
+                )
+            await update.message.reply_text("Tüm veriler silindi. Sistem sıfırlandı.")
+        except Exception as e:
+            await update.message.reply_text(f"Hata: {str(e)}\n\nManuel sıfırlama için Supabase SQL Editor'ı kullan.")
+        return True
+    elif mesaj in ["HAYIR", "İPTAL", "IPTAL"]:
+        sifirlama_bekleyen.discard(uid)
+        await update.message.reply_text("İptal edildi.")
+        return True
+    return False

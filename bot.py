@@ -79,6 +79,7 @@ DİĞER İŞLEMLER:
 - "avans verdim / avans aldı" → avans
 - "iade etti / geri ödedi" → iade  
 - "X'ten Y'ye transfer / havale" → transfer
+- "X'e ödeme yaptık / X'e borç ödedik / X faturasını ödedik" → borc_odendi (tedarikçiye ödeme)
 - "X bakiyesi N bin / başlangıç bakiyesi" → bakiye_gir
 - "sözleşme imzaladık / anlaşma yaptık" → sozlesme
 - "Jetlink ekle tedarikçi / X müşteri olarak kaydet" → musteri_ekle veya tedarikci_ekle
@@ -270,18 +271,36 @@ async def islem_yap(parsed, update):
                 f"Banka: {banka_ad}\nFatura: {durum_text}")
 
     elif islem == "borc_odendi":
+        tedarikci = parsed.get("tedarikci", "")
+        fatura_guncellendi = False
+        kalan_text = ""
+        if tedarikci:
+            faturalar = await sb_get("gelen_faturalar", f"?tedarikci_adi=ilike.*{tedarikci}*&durum=in.(bekliyor,kismi)&order=fatura_tarihi.desc")
+            if faturalar and isinstance(faturalar, list):
+                fatura = faturalar[0]
+                fatura_id = fatura["id"]
+                fatura_toplam = float(fatura.get("toplam_tutar") or 0)
+                mevcut_odenen = float(fatura.get("odenen") or 0)
+                yeni_odenen = mevcut_odenen + tutar
+                yeni_durum = "odendi" if yeni_odenen >= fatura_toplam else "kismi"
+                kalan = max(0, fatura_toplam - yeni_odenen)
+                await sb_patch("gelen_faturalar", f"?id=eq.{fatura_id}", {
+                    "durum": yeni_durum,
+                    "odeme_tarihi": bugun,
+                    "odenen": yeni_odenen
+                })
+                fatura_guncellendi = True
+                kalan_text = "KAPANDI" if yeni_durum == "odendi" else f"Kalan: {para_formatla(kalan)}"
         await sb_post("hesap_hareketleri", {
             "tarih": bugun, "tur": "gider", "tutar": tutar,
-            "aciklama": parsed.get("aciklama", "Borc odemesi"),
-            "karsi_taraf": parsed.get("tedarikci", ""),
+            "aciklama": parsed.get("aciklama", f"{tedarikci} borc odemesi"),
+            "karsi_taraf": tedarikci,
             "banka_hesabi_id": banka_id, "kategori": "borc odemesi"
         })
-        tedarikci = parsed.get("tedarikci", "")
-        if tedarikci:
-            faturalar = await sb_get("gelen_faturalar", f"?tedarikci_adi=ilike.*{tedarikci}*&durum=in.(bekliyor,kismi)")
-            if faturalar and isinstance(faturalar, list):
-                await sb_patch("gelen_faturalar", f"?id=eq.{faturalar[0]['id']}", {"durum": "odendi", "odeme_tarihi": bugun})
-        return f"Borc odemesi kaydedildi!\n\n{para_formatla(tutar)}\nBanka: {banka_ad}\n{parsed.get('aciklama','')}"
+        sonuc = f"Borc odemesi kaydedildi!\n\n{para_formatla(tutar)}\nBanka: {banka_ad}\nTedarikci: {tedarikci}"
+        if fatura_guncellendi:
+            sonuc += f"\nFatura: {kalan_text}"
+        return sonuc
 
     elif islem == "avans":
         kisi = parsed.get("kisi", "")
@@ -407,7 +426,7 @@ async def anlik_durum_getir():
 
     toplam_alacak = sum(float(r.get("kalan_alacak") or r.get("toplam_tutar") or 0) for r in alacaklar) if isinstance(alacaklar, list) else 0
     geciken_alacak = sum(float(r.get("kalan_alacak") or r.get("toplam_tutar") or 0) for r in alacaklar if isinstance(alacaklar, list) and (r.get("gecikme_gunu") or 0) > 0)
-    toplam_borc = sum(float(r.get("toplam_tutar") or 0) for r in borclar) if isinstance(borclar, list) else 0
+    toplam_borc = sum(float(r.get("kalan_borc") or r.get("toplam_tutar") or 0) for r in borclar) if isinstance(borclar, list) else 0
     net = toplam_kasa + toplam_alacak - toplam_borc
 
     ortak_text = "ORTAKLAR\n"
@@ -465,15 +484,22 @@ async def borclar_getir():
     data = await sb_get("bekleyen_borclar")
     if not isinstance(data, list) or not data:
         return "Bekleyen borc yok!"
-    toplam = sum(float(r.get("toplam_tutar") or 0) for r in data)
     metin = f"BEKLEYEN BORCLAR ({len(data)} fatura)\n\n"
     for r in data:
-        t = float(r.get("toplam_tutar") or 0)
+        toplam_t = float(r.get("toplam_tutar") or 0)
+        kalan = float(r.get("kalan_borc") or toplam_t)
+        odenen = float(r.get("odenen") or 0)
         g = r.get("gecikme_gunu") or 0
         gecikme = f" ⚠ {g} gun gecikti" if g and g > 0 else ""
         vade = r.get("vade_tarihi") or "Vade yok"
-        metin += f"{r.get('tedarikci_adi','?')} | {r.get('kategori','')} | {para_formatla(t)} | Vade: {vade}{gecikme}\n"
-    metin += f"\nToplam: {para_formatla(toplam)}"
+        metin += f"{r.get('tedarikci_adi','?')} | {r.get('kategori','')}\n"
+        if odenen > 0:
+            metin += f"  Toplam: {para_formatla(toplam_t)} | Odenen: {para_formatla(odenen)} | Kalan: {para_formatla(kalan)}\n"
+        else:
+            metin += f"  {para_formatla(kalan)} | Vade: {vade}{gecikme}\n"
+        metin += "\n"
+    toplam_kalan = sum(float(r.get("kalan_borc") or r.get("toplam_tutar") or 0) for r in data)
+    metin += f"Toplam Kalan: {para_formatla(toplam_kalan)}"
     return metin
 
 async def ortaklar_getir():

@@ -2,7 +2,7 @@ import os
 import logging
 from datetime import date
 from telegram import Update
-from telegram.ext import Application, MessageHandler, filters, ContextTypes
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 import httpx
 import json
 

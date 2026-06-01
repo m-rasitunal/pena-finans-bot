@@ -188,8 +188,14 @@ async def islem_yap(parsed, update):
         fatura_toplam = float(fatura.get("toplam_tutar") or 0)
         
         # Kısmi ödeme mi tam ödeme mi?
-        yeni_durum = "odendi" if tutar >= fatura_toplam else "kismi"
-        await sb_patch("kesilen_faturalar", f"?id=eq.{fatura_id}", {"durum": yeni_durum, "odeme_tarihi": bugun})
+        mevcut_tahsil = float(fatura.get("tahsil_edilen") or 0)
+        yeni_tahsil = mevcut_tahsil + tutar
+        yeni_durum = "odendi" if yeni_tahsil >= fatura_toplam else "kismi"
+        await sb_patch("kesilen_faturalar", f"?id=eq.{fatura_id}", {
+            "durum": yeni_durum, 
+            "odeme_tarihi": bugun,
+            "tahsil_edilen": yeni_tahsil
+        })
         
         # Kasa hareketi oluştur
         await sb_post("hesap_hareketleri", {
@@ -332,8 +338,8 @@ async def anlik_durum_getir():
     kasa_text += f"Toplam: {toplam_kasa:,.0f} TL"
 
     # Alacaklar
-    toplam_alacak = sum(float(r.get("toplam_tutar") or 0) for r in alacaklar) if isinstance(alacaklar, list) else 0
-    geciken_alacak = sum(float(r.get("toplam_tutar") or 0) for r in alacaklar if isinstance(alacaklar, list) and (r.get("gecikme_gunu") or 0) > 0)
+    toplam_alacak = sum(float(r.get("kalan_alacak") or r.get("toplam_tutar") or 0) for r in alacaklar) if isinstance(alacaklar, list) else 0
+    geciken_alacak = sum(float(r.get("kalan_alacak") or r.get("toplam_tutar") or 0) for r in alacaklar if isinstance(alacaklar, list) and (r.get("gecikme_gunu") or 0) > 0)
 
     # Borçlar
     toplam_borc = sum(float(r.get("toplam_tutar") or 0) for r in borclar) if isinstance(borclar, list) else 0
@@ -378,13 +384,20 @@ async def alacaklar_getir():
     toplam = sum(float(r.get("toplam_tutar") or 0) for r in data)
     metin = f"BEKLEYEN ALACAKLAR ({len(data)} fatura)\n\n"
     for r in data:
-        t = float(r.get("toplam_tutar") or 0)
+        toplam_t = float(r.get("toplam_tutar") or 0)
+        kalan = float(r.get("kalan_alacak") or r.get("toplam_tutar") or 0)
+        tahsil = float(r.get("tahsil_edilen") or 0)
         g = r.get("gecikme_gunu") or 0
         gecikme = f" ⚠ {g} gun gecikti" if g and g > 0 else ""
         vade = r.get("vade_tarihi") or "Vade yok"
         metin += f"{r.get('fatura_no','?')} - {r.get('musteri_adi','?')}\n"
-        metin += f"  {r.get('proje_adi','')} | {t:,.0f} TL | Vade: {vade}{gecikme}\n\n"
-    metin += f"Toplam: {toplam:,.0f} TL"
+        if tahsil > 0:
+            metin += f"  Toplam: {toplam_t:,.0f} TL | Tahsil: {tahsil:,.0f} TL | Kalan: {kalan:,.0f} TL\n"
+        else:
+            metin += f"  {kalan:,.0f} TL | Vade: {vade}{gecikme}\n"
+        metin += "\n"
+    toplam_kalan = sum(float(r.get("kalan_alacak") or r.get("toplam_tutar") or 0) for r in data)
+    metin += f"Toplam Kalan: {toplam_kalan:,.0f} TL"
     return metin
 
 async def borclar_getir():

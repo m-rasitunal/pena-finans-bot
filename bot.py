@@ -571,18 +571,6 @@ async def mesaj_isle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # Banka bekleniyor
-    if uid in banka_bekleyen:
-        parsed = banka_bekleyen.pop(uid)
-        parsed["banka"] = mesaj.strip()
-        await update.message.reply_text("Kaydediliyor...")
-        try:
-            sonuc = await islem_yap(parsed, update)
-            await update.message.reply_text(sonuc)
-        except Exception as e:
-            await update.message.reply_text(f"Hata: {str(e)}")
-        return
-
     # Özet tarih aralığı bekleniyor
     if uid in ozet_bekleyen:
         ozet_bekleyen.pop(uid)
@@ -661,6 +649,8 @@ async def mesaj_isle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Kayıt işlemleri → onay iste
     if islem != "bilinmiyor":
         onay = parsed.get("onay_mesaji", "Bu islemi kaydedeyim mi?")
+        if parsed.get("_banka_eksik"):
+            onay += "\n\n⚠ Banka belirtilmedi, kayıt yapılacak ama banka bilgisi eksik kalacak."
         bekleyen[uid] = parsed
         await update.message.reply_text(f"{onay}\n\nEvet veya Hayir yaz.")
     else:
